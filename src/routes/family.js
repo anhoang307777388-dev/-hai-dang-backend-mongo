@@ -18,9 +18,19 @@ async function loadOwnedMember(req, res) {
   return member;
 }
 
+// Vá cho các hồ sơ tạo từ trước khi trường qrCode được lưu bắt buộc — sinh mã và lưu lại ngay khi phát hiện thiếu.
+async function ensureQrCode(member) {
+  if (!member.qrCode) {
+    member.qrCode = uuid();
+    await member.save();
+  }
+  return member;
+}
+
 // Danh sách hồ sơ (bản thân + người thân) thuộc về tài khoản đang đăng nhập
 router.get('/', requireAuth, requireRole('citizen'), async (req, res) => {
   const members = await FamilyMember.find({ ownerId: req.user._id }).sort({ createdAt: 1 });
+  await Promise.all(members.map(ensureQrCode));
   res.json({ members: members.map((m) => m.toClientJSON()) });
 });
 
