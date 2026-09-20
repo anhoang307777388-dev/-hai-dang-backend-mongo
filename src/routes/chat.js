@@ -32,7 +32,7 @@ router.post('/', requireAuth, async (req, res) => {
     });
   });
 
-  const model = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+  const model = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
 
   try {
     const upstream = await fetch(
