@@ -55,7 +55,7 @@ const familyMemberSchema = new mongoose.Schema(
     dob: { type: String, default: '' },
     gender: { type: String, default: 'Nam' },
     history: { type: String, default: '' },
-    qrCode: { type: String, unique: true, index: true },
+    qrCode: { type: String, unique: true, sparse: true, index: true },
     exams: { type: [examSchema], default: [] },
     meds: { type: [medSchema], default: [] },
     vitals: { type: [vitalSchema], default: [] },
