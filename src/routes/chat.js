@@ -32,6 +32,24 @@ router.post('/', requireAuth, async (req, res) => {
     });
   });
 
+  // Gemini bắt buộc các lượt phải LUÂN PHIÊN user/model — không được 2 lượt cùng vai trò liền nhau.
+  // Hội thoại càng dài càng dễ bị lệch (ví dụ do người dùng kéo-thả sắp xếp lại tin nhắn, hoặc gửi
+  // liên tiếp trước khi có phản hồi), nên ở đây ta tự gộp các lượt liền kề cùng vai trò lại làm 1,
+  // đảm bảo luôn đúng thứ tự trước khi gửi đi — tránh Gemini trả lỗi 400 giữa chừng cuộc trò chuyện.
+  const normalizedContents = [];
+  contents.forEach(c => {
+    const prev = normalizedContents[normalizedContents.length - 1];
+    if (prev && prev.role === c.role) {
+      prev.parts[0].text += '\n' + c.parts[0].text;
+    } else {
+      normalizedContents.push({ role: c.role, parts: [{ text: c.parts[0].text }] });
+    }
+  });
+  // Gemini cũng yêu cầu lượt đầu tiên phải là "user" — phòng trường hợp lịch sử trống hoặc bắt đầu bằng "model".
+  while (normalizedContents.length && normalizedContents[0].role !== 'user') {
+    normalizedContents.shift();
+  }
+
   const model = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
 
   try {
@@ -40,7 +58,7 @@ router.post('/', requireAuth, async (req, res) => {
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-        body: JSON.stringify({ contents }),
+        body: JSON.stringify({ contents: normalizedContents }),
       }
     );
     const data = await upstream.json();
