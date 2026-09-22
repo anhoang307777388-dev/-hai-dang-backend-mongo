@@ -1,5 +1,6 @@
 const express = require('express');
 const SosAlert = require('../models/SosAlert');
+const FamilyMember = require('../models/FamilyMember');
 const { requireAuth, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
@@ -7,7 +8,7 @@ const router = express.Router();
 // Người dân gửi SOS. Nếu đang có báo động chưa đóng ca (active/confirmed) của chính họ,
 // trả về báo động đó luôn thay vì tạo trùng — tránh spam nhiều báo động cùng lúc.
 router.post('/', requireAuth, requireRole('citizen'), async (req, res) => {
-  const { lat, lng, phone, note } = req.body || {};
+  const { lat, lng, phone, relativePhone, note } = req.body || {};
   if (typeof lat !== 'number' || typeof lng !== 'number') {
     return res.status(400).json({ error: 'Không xác định được vị trí GPS.' });
   }
@@ -18,6 +19,7 @@ router.post('/', requireAuth, requireRole('citizen'), async (req, res) => {
     citizenId: req.user._id,
     name: req.user.name,
     phone: phone || '',
+    relativePhone: relativePhone || '',
     note: note || '',
     lat,
     lng,
@@ -61,7 +63,24 @@ router.get('/', requireAuth, requireRole('medical', 'admin', 'director'), async 
   const alerts = await SosAlert.find({
     $or: [{ status: { $ne: 'resolved' } }, { updatedAt: { $gte: since } }],
   }).sort({ createdAt: -1 });
-  res.json({ alerts: alerts.map((a) => a.toClientJSON()) });
+
+  // Kèm theo danh sách hồ sơ gia đình (bản thân + người thân) của người gửi SOS, để nhân viên y tế
+  // biết trong nhà còn ai (VD: có người già/trẻ nhỏ cần ai đó đến trông), tiện báo tin cho người thân.
+  const citizenIds = [...new Set(alerts.map((a) => a.citizenId.toString()))];
+  const familyMembers = await FamilyMember.find({ ownerId: { $in: citizenIds } });
+  const familyByOwner = {};
+  familyMembers.forEach((m) => {
+    const key = m.ownerId.toString();
+    if (!familyByOwner[key]) familyByOwner[key] = [];
+    familyByOwner[key].push({ name: m.name, relationship: m.relationship });
+  });
+
+  res.json({
+    alerts: alerts.map((a) => ({
+      ...a.toClientJSON(),
+      familyMembers: familyByOwner[a.citizenId.toString()] || [],
+    })),
+  });
 });
 
 router.patch('/:id/status', requireAuth, requireRole('medical', 'admin', 'director'), async (req, res) => {
