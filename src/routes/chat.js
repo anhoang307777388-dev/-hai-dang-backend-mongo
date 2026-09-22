@@ -51,10 +51,12 @@ router.post('/', requireAuth, async (req, res) => {
   }
 
   const model = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
+  const fallbackModel = process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash';
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  try {
+  async function callGemini(useModel) {
     const upstream = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${useModel}:generateContent`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
@@ -62,11 +64,34 @@ router.post('/', requireAuth, async (req, res) => {
       }
     );
     const data = await upstream.json();
-    if (!upstream.ok) {
-      console.error('Lỗi từ Gemini API:', data);
-      return res.status(502).json({ error: data.error?.message || 'Trợ lý AI đang gặp sự cố, vui lòng thử lại.' });
+    return { ok: upstream.ok, status: upstream.status, data };
+  }
+  function isOverloaded(result) {
+    const msg = result.data?.error?.message || '';
+    return result.status === 503 || result.status === 429 || /overload|high demand|unavailable/i.test(msg);
+  }
+
+  try {
+    // Mô hình đang dùng đôi khi bị Google báo "quá tải" (lỗi tạm thời phía họ, không phải lỗi code
+    // của mình) — nên ở đây tự thử lại vài lần trước khi báo lỗi cho người dùng, và nếu vẫn không
+    // được thì thử sang 1 model dự phòng khác, thay vì bắt người dùng tự bấm gửi lại.
+    let result = await callGemini(model);
+    if (!result.ok && isOverloaded(result)) {
+      await sleep(700);
+      result = await callGemini(model);
     }
-    const text = data.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';
+    if (!result.ok && isOverloaded(result) && fallbackModel !== model) {
+      await sleep(300);
+      result = await callGemini(fallbackModel);
+    }
+    if (!result.ok) {
+      console.error('Lỗi từ Gemini API:', result.data);
+      const friendly = isOverloaded(result)
+        ? 'Trợ lý AI đang bị quá tải tạm thời, vui lòng thử gửi lại sau ít phút.'
+        : (result.data.error?.message || 'Trợ lý AI đang gặp sự cố, vui lòng thử lại.');
+      return res.status(502).json({ error: friendly });
+    }
+    const text = result.data.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';
     // Chuyển về đúng hình dạng mà frontend đang mong đợi (giống định dạng của Anthropic)
     res.json({ content: [{ type: 'text', text }] });
   } catch (err) {
