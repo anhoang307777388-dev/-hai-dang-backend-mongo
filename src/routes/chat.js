@@ -41,8 +41,9 @@ router.post('/', requireAuth, async (req, res) => {
   }
   if (!normalizedContents.length) return res.status(400).json({ error: 'Thiếu nội dung hội thoại.' });
 
-  const model = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
-  const fallbackModel = process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash';
+  // gemini-2.5-flash đã bị Google ngừng cho người dùng mới — dùng dòng 3.x.
+  const model = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+  const fallbackModel = process.env.GEMINI_FALLBACK_MODEL || 'gemini-3.6-flash';
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   async function callGemini(useModel) {
@@ -63,6 +64,11 @@ router.post('/', requireAuth, async (req, res) => {
     const msg = result.data?.error?.message || '';
     return result.status === 503 || result.status === 429 || /overload|high demand|unavailable/i.test(msg);
   }
+  // Model đã bị ngừng / không tồn tại (vd. biến môi trường còn ghi model cũ) — chuyển sang model dự phòng.
+  function isRetired(result) {
+    const msg = result.data?.error?.message || '';
+    return result.status === 404 || /no longer available|not found|update your code|deprecated/i.test(msg);
+  }
 
   try {
     // Mô hình đôi khi bị Google báo "quá tải" (lỗi tạm thời phía họ) — tự thử lại, rồi chuyển model dự phòng.
@@ -71,7 +77,7 @@ router.post('/', requireAuth, async (req, res) => {
       await sleep(700);
       result = await callGemini(model);
     }
-    if (!result.ok && isOverloaded(result) && fallbackModel !== model) {
+    if (!result.ok && (isOverloaded(result) || isRetired(result)) && fallbackModel !== model) {
       await sleep(300);
       result = await callGemini(fallbackModel);
     }
@@ -79,7 +85,7 @@ router.post('/', requireAuth, async (req, res) => {
       console.error('Lỗi từ Gemini API:', result.data);
       const friendly = isOverloaded(result)
         ? 'Trợ lý sức khỏe đang bị quá tải tạm thời, vui lòng thử gửi lại sau ít phút.'
-        : (result.data.error?.message || 'Trợ lý sức khỏe đang gặp sự cố, vui lòng thử lại.');
+        : 'Trợ lý sức khỏe đang gặp sự cố, vui lòng thử lại sau.';
       return res.status(502).json({ error: friendly });
     }
 
